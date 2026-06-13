@@ -1,0 +1,97 @@
+# TRAE CI 验证 — GitLab CI
+#
+# 阶段：validate → test → publish
+# 镜像：python:3.11-slim（最小依赖）
+# 缓存：pip 缓存（基于 requirements.txt 或 pyyaml marker）
+
+stages:
+  - validate
+  - test
+  - publish
+
+# -----------------------------------------------------------------------------
+# 全局变量
+# -----------------------------------------------------------------------------
+variables:
+  PYTHON_VERSION: "3.11"
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+
+# 默认镜像（所有 job 继承）
+default:
+  image: python:${PYTHON_VERSION}-slim
+  cache:
+    key:
+      files:
+        - .trae/scripts/ci/ci_check.py
+    paths:
+      - .cache/pip
+      - .venv/
+  before_script:
+    - python --version
+    - pip install --upgrade pip
+    - pip install pyyaml
+
+# -----------------------------------------------------------------------------
+# Stage 1: CI 验证（核心：4 个 checker）
+# -----------------------------------------------------------------------------
+ci:validate:
+  stage: validate
+  script:
+    - bash .trae/scripts/ci-check.sh --json | tee ci-report.json
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ci-report.json
+    reports:
+      # GitLab 17+ 支持 junit，此处保留为自定义 JSON 附件
+      junit: ci-report.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# -----------------------------------------------------------------------------
+# Stage 2: 单元测试
+# -----------------------------------------------------------------------------
+ci:test:
+  stage: test
+  script:
+    - python -m unittest discover .trae/scripts/ci/tests/ -v
+  coverage: '/Ran \d+ tests in [\d.]+s/'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - .coverage
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# -----------------------------------------------------------------------------
+# Stage 3: 规范快速检查（PR only，最快反馈）
+# -----------------------------------------------------------------------------
+ci:spec-quick:
+  stage: validate
+  script:
+    - bash .trae/scripts/ci-check.sh --checker spec --verbose
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# -----------------------------------------------------------------------------
+# Stage 4: 发布 CI 报告（main 分支专用）
+# -----------------------------------------------------------------------------
+ci:publish-report:
+  stage: publish
+  script:
+    - apt-get update -qq && apt-get install -y -qq jq
+    - bash .trae/scripts/ci-check.sh --json > ci-report.json
+    - jq '.summary' ci-report.json
+  artifacts:
+    paths:
+      - ci-report.json
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

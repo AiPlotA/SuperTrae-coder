@@ -1,0 +1,114 @@
+# TRAE CI 验证 — GitHub Actions
+#
+# 触发：push / pull_request 到 main，以及手动触发
+# 行为：跑 spec/config/paths/specialists 4 个 checker + 单元测试
+# 失败：任一 hard 失败则阻止合并（branch protection 推荐开启）
+
+name: TRAE CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同分支 PR 取消正在跑的旧 job，节省 CI 资源
+concurrency:
+  group: trae-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 最小权限：只读 + 写 commit status
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: 单元测试
+  # ----------------------------------------------------------------------------
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: 跑测试
+        run: |
+          python -m unittest discover .trae/scripts/ci/tests/ -v
+
+  # ----------------------------------------------------------------------------
+  # Job 2: CI 验证（4 个 checker）
+  # ----------------------------------------------------------------------------
+  ci-validate:
+    name: CI 验证
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: test
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装 PyYAML
+        run: pip install pyyaml
+
+      - name: 跑 CI 验证
+        id: validate
+        run: |
+          bash .trae/scripts/ci-check.sh --json > ci-report.json
+          echo "## CI 报告" >> $GITHUB_STEP_SUMMARY
+          cat ci-report.json >> $GITHUB_STEP_SUMMARY
+
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report
+          path: ci-report.json
+          retention-days: 14
+
+  # ----------------------------------------------------------------------------
+  # Job 3: Spec 专项（只在 PR 上跑，缩短反馈循环）
+  # ----------------------------------------------------------------------------
+  spec-quick-check:
+    name: 规范快速检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 PyYAML
+        run: pip install pyyaml
+
+      - name: 跑 spec checker
+        run: |
+          bash .trae/scripts/ci-check.sh --checker spec --verbose
