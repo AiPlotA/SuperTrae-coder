@@ -24,6 +24,7 @@
 ```bash
 # 在你的目标项目根目录执行
 CODE_AGENT_NAME=".trae"  # 可自定义其他编程代理，默认 .trae，例如 .codex 等
+mkdir -p $CODE_AGENT_NAME
 git clone https://github.com/AiPlotA/SuperTrae-coder.git .trae-bootstrap \
   && cp -r .trae-bootstrap/config/* $CODE_AGENT_NAME/ \
   && cp -r .trae-bootstrap/scripts scripts \
